@@ -1,6 +1,66 @@
 // ==========================================================================
-// EzShare Renderer Application Logic
+// EzShare Renderer Application Logic (Windows & Android Cross-Platform)
 // ==========================================================================
+
+// Android Bridge Shim
+if (window.AndroidHost && !window.ezshare) {
+  let _reqId = 0;
+  window._pending = window._pending || {};
+  window.__ezshare_resolve = function(id, res, err) {
+    if (window._pending[id]) {
+      if (err) window._pending[id].reject(new Error(err));
+      else window._pending[id].resolve(res);
+      delete window._pending[id];
+    }
+  };
+  const _listeners = {};
+  window.__ezshare_dispatch = function(eventName, data) {
+    if (_listeners[eventName]) {
+      _listeners[eventName].forEach(fn => fn(typeof data === 'string' ? JSON.parse(data) : data));
+    }
+  };
+  function callAndroid(action, payload) {
+    return new Promise((resolve, reject) => {
+      const id = ++_reqId;
+      window._pending[id] = { resolve, reject };
+      window.AndroidHost.callNative(id, action, typeof payload === 'string' ? payload : JSON.stringify(payload || {}));
+    });
+  }
+  window.ezshare = {
+    selectFiles: () => callAndroid('selectFiles'),
+    selectDirectory: () => callAndroid('selectDirectory'),
+    openFolder: (p) => callAndroid('openFolder', p),
+    getLocalInfo: () => callAndroid('getLocalInfo'),
+    startDiscovery: () => callAndroid('startDiscovery'),
+    stopDiscovery: () => callAndroid('stopDiscovery'),
+    sendFiles: (targetDevice, files) => callAndroid('sendFiles', { targetDevice, files }),
+    cancelSend: () => callAndroid('cancelSend'),
+    startReceiver: (folder) => callAndroid('startReceiver', folder),
+    stopReceiver: () => callAndroid('stopReceiver'),
+    changeDestinationFolder: (folder) => callAndroid('changeDestinationFolder', folder),
+
+    onDevicesUpdated: (cb) => {
+      _listeners['devices-updated'] = _listeners['devices-updated'] || [];
+      _listeners['devices-updated'].push(cb);
+    },
+    onTransferProgress: (cb) => {
+      _listeners['transfer-progress'] = _listeners['transfer-progress'] || [];
+      _listeners['transfer-progress'].push(cb);
+    },
+    onTransferComplete: (cb) => {
+      _listeners['transfer-complete'] = _listeners['transfer-complete'] || [];
+      _listeners['transfer-complete'].push(cb);
+    },
+    onTransferRequested: (cb) => {
+      _listeners['transfer-requested'] = _listeners['transfer-requested'] || [];
+      _listeners['transfer-requested'].push(cb);
+    },
+    onError: (cb) => {
+      _listeners['error'] = _listeners['error'] || [];
+      _listeners['error'].push(cb);
+    }
+  };
+}
 
 const State = {
   currentView: 'viewHome',

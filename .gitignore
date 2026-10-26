@@ -10,6 +10,12 @@ build/
 release/
 *.exe
 *.zip
+*.apk
+*.aab
+.gradle/
+local.properties
+android/app/build/
+android/build/
 
 # System & OS
 Thumbs.db
