@@ -31,6 +31,16 @@ public partial class MainWindow : Window
         _transferServer = new TransferServer();
         _transferClient = new TransferClient();
 
+        try
+        {
+            var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+            if (File.Exists(iconPath))
+            {
+                Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri(iconPath));
+            }
+        }
+        catch { }
+
         WireUpEvents();
 
         Loaded += MainWindow_Loaded;
