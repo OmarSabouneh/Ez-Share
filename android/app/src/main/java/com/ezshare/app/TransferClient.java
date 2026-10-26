@@ -96,6 +96,9 @@ public class TransferClient {
                     conn.setDoOutput(true);
                     conn.setFixedLengthStreamingMode(file.size);
                     conn.setRequestProperty("Content-Type", "application/octet-stream");
+                    conn.setRequestProperty("Expect", "");
+                    conn.setConnectTimeout(10000);
+                    conn.setReadTimeout(60000);
 
                     try (InputStream in = context.getContentResolver().openInputStream(file.uri);
                          OutputStream out = conn.getOutputStream()) {
@@ -190,6 +193,9 @@ public class TransferClient {
 
     private void postJson(String urlStr, String json) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        conn.setConnectTimeout(8000);
+        conn.setReadTimeout(15000);
+        conn.setRequestProperty("Expect", "");
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setDoOutput(true);

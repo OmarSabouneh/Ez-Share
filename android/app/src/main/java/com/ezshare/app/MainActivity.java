@@ -5,7 +5,9 @@ import android.content.ClipData;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.OpenableColumns;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -21,6 +23,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -93,6 +96,10 @@ public class MainActivity extends AppCompatActivity {
                             );
                         } catch (Exception ignored) {}
                         selectedFolderUri = uri;
+                        saveDestinationFolder(uri.toString());
+                        if (transferServer != null) {
+                            transferServer.setDestinationFolder(uri.toString());
+                        }
                         resolvePendingJs(currentReqId, "\"" + uri.toString() + "\"");
                     } else {
                         resolvePendingJs(currentReqId, "null");
@@ -203,15 +210,28 @@ public class MainActivity extends AppCompatActivity {
                             break;
 
                         case "openFolder":
-                            if (selectedFolderUri != null) {
-                                Intent intent = new Intent(Intent.ACTION_VIEW);
-                                intent.setDataAndType(selectedFolderUri, "*/*");
-                                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            String folderToOpen = payload != null && !payload.isEmpty() && !"null".equals(payload) ? payload.replace("\"", "") : "";
+                            if (folderToOpen.isEmpty()) {
+                                folderToOpen = getSavedDestinationFolder();
+                            }
+                            boolean opened = false;
+                            if (folderToOpen.startsWith("content://")) {
                                 try {
+                                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                                    intent.setDataAndType(Uri.parse(folderToOpen), "*/*");
+                                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                                     startActivity(intent);
-                                } catch (Exception e) {
-                                    Toast.makeText(MainActivity.this, "Folder saved: " + selectedFolderUri.getPath(), Toast.LENGTH_SHORT).show();
-                                }
+                                    opened = true;
+                                } catch (Exception ignored) {}
+                            } else {
+                                try {
+                                    Intent intent = new Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS);
+                                    startActivity(intent);
+                                    opened = true;
+                                } catch (Exception ignored) {}
+                            }
+                            if (!opened) {
+                                Toast.makeText(MainActivity.this, "Files saved in: " + folderToOpen, Toast.LENGTH_LONG).show();
                             }
                             resolvePendingJs(id, "true");
                             break;
@@ -251,16 +271,28 @@ public class MainActivity extends AppCompatActivity {
                             break;
 
                         case "startReceiver":
-                            if (selectedFolderUri != null) {
-                                int assignedPort = transferServer.start(selectedFolderUri, 53318);
-                                discoveryService.setReceiverReady(true, assignedPort);
-                                JSONObject res = new JSONObject();
-                                res.put("port", assignedPort);
-                                res.put("destinationFolder", selectedFolderUri.toString());
-                                resolvePendingJs(id, res.toString());
-                            } else {
-                                resolvePendingJs(id, "null");
+                            String reqFolder = payload != null && !payload.isEmpty() && !"null".equals(payload) && !"\"\"".equals(payload)
+                                    ? payload.replace("\"", "") : "";
+                            String targetFolder = reqFolder;
+                            if (targetFolder.isEmpty()) {
+                                targetFolder = getSavedDestinationFolder();
                             }
+                            if (targetFolder.isEmpty()) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+                                    requestAllFilesAccess();
+                                }
+                                File defDir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "EzShare");
+                                if (!defDir.exists()) defDir.mkdirs();
+                                targetFolder = defDir.getAbsolutePath();
+                                saveDestinationFolder(targetFolder);
+                            }
+
+                            int assignedPort = transferServer.start(targetFolder, 53318);
+                            discoveryService.setReceiverReady(true, assignedPort);
+                            JSONObject res = new JSONObject();
+                            res.put("port", assignedPort);
+                            res.put("destinationFolder", targetFolder);
+                            resolvePendingJs(id, res.toString());
                             break;
 
                         case "stopReceiver":
@@ -270,7 +302,14 @@ public class MainActivity extends AppCompatActivity {
                             break;
 
                         case "changeDestinationFolder":
-                            folderPickerLauncher.launch(null);
+                            String newPath = payload != null && !payload.isEmpty() && !"null".equals(payload) ? payload.replace("\"", "") : "";
+                            if (!newPath.isEmpty()) {
+                                saveDestinationFolder(newPath);
+                                transferServer.setDestinationFolder(newPath);
+                                resolvePendingJs(id, "true");
+                            } else {
+                                folderPickerLauncher.launch(null);
+                            }
                             break;
 
                         default:
@@ -281,6 +320,36 @@ public class MainActivity extends AppCompatActivity {
                     resolvePendingJs(id, "null");
                 }
             });
+        }
+    }
+
+    private void saveDestinationFolder(String folder) {
+        getSharedPreferences("ezshare_prefs", MODE_PRIVATE)
+                .edit()
+                .putString("destination_folder", folder)
+                .apply();
+    }
+
+    private String getSavedDestinationFolder() {
+        return getSharedPreferences("ezshare_prefs", MODE_PRIVATE)
+                .getString("destination_folder", "");
+    }
+
+    private void requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                if (!Environment.isExternalStorageManager()) {
+                    Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                    Toast.makeText(this, "Please enable All Files Access to save files in Downloads", Toast.LENGTH_LONG).show();
+                }
+            } catch (Exception e) {
+                try {
+                    Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                    startActivity(intent);
+                } catch (Exception ignored) {}
+            }
         }
     }
 

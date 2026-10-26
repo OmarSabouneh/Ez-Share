@@ -179,6 +179,14 @@ public class TransferServer : IDisposable
                 headers.TryGetValue("Content-Length", out var clStr);
                 long.TryParse(clStr, out var contentLength);
 
+                // Acknowledge Expect: 100-continue immediately to prevent client (Android) stalls
+                if (headers.TryGetValue("Expect", out var expectVal) && expectVal.Contains("100-continue", StringComparison.OrdinalIgnoreCase))
+                {
+                    var continueBytes = Encoding.UTF8.GetBytes("HTTP/1.1 100 Continue\r\n\r\n");
+                    await stream.WriteAsync(continueBytes, token);
+                    await stream.FlushAsync(token);
+                }
+
                 // Handle Handshake
                 if (method.Equals("POST", StringComparison.OrdinalIgnoreCase) && rawUrl.StartsWith("/api/transfer/handshake"))
                 {

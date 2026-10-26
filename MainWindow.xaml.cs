@@ -280,6 +280,14 @@ public partial class MainWindow : Window
 
                     case "startReceiver":
                         string destFolder = payload.GetString() ?? "";
+                        if (string.IsNullOrWhiteSpace(destFolder))
+                        {
+                            destFolder = LoadSavedDestinationFolder();
+                        }
+                        else
+                        {
+                            SaveDestinationFolder(destFolder);
+                        }
                         int assignedPort = _transferServer.Start(destFolder);
                         _discoveryService.SetReceiverReady(true, assignedPort);
                         result = new { port = assignedPort, destinationFolder = destFolder };
@@ -293,7 +301,11 @@ public partial class MainWindow : Window
 
                     case "changeDestinationFolder":
                         string newFolder = payload.GetString() ?? "";
-                        _transferServer.SetDestinationFolder(newFolder);
+                        if (!string.IsNullOrWhiteSpace(newFolder))
+                        {
+                            _transferServer.SetDestinationFolder(newFolder);
+                            SaveDestinationFolder(newFolder);
+                        }
                         result = true;
                         break;
 
@@ -355,6 +367,63 @@ public partial class MainWindow : Window
         {
             WebView.CoreWebView2.ExecuteScriptAsync($"window.__ezshare_dispatch('{eventName}', {jsonPayload});");
         }
+    }
+
+    private static string GetConfigFilePath()
+    {
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EzShare");
+        if (!Directory.Exists(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+        return Path.Combine(dir, "config.json");
+    }
+
+    private static string LoadSavedDestinationFolder()
+    {
+        try
+        {
+            var configPath = GetConfigFilePath();
+            if (File.Exists(configPath))
+            {
+                var json = File.ReadAllText(configPath);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("DestinationFolder", out var prop))
+                {
+                    var saved = prop.GetString();
+                    if (!string.IsNullOrWhiteSpace(saved))
+                    {
+                        if (!Directory.Exists(saved)) Directory.CreateDirectory(saved);
+                        return saved;
+                    }
+                }
+            }
+        }
+        catch { }
+
+        // Default to ~/Downloads/EzShare
+        var defaultFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "EzShare");
+        try
+        {
+            if (!Directory.Exists(defaultFolder)) Directory.CreateDirectory(defaultFolder);
+        }
+        catch { }
+        return defaultFolder;
+    }
+
+    private static void SaveDestinationFolder(string folder)
+    {
+        try
+        {
+            var configPath = GetConfigFilePath();
+            var dict = new Dictionary<string, string>
+            {
+                ["DestinationFolder"] = folder
+            };
+            var json = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(configPath, json);
+        }
+        catch { }
     }
 
     private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)

@@ -241,14 +241,40 @@ public class DiscoveryService : IDisposable
     {
         try
         {
-            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
-            {
-                if (ni.OperationalStatus != OperationalStatus.Up || ni.NetworkInterfaceType == NetworkInterfaceType.Loopback)
-                    continue;
+            var interfaces = NetworkInterface.GetAllNetworkInterfaces()
+                .Where(ni => ni.OperationalStatus == OperationalStatus.Up &&
+                             ni.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                             ni.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
+                .Where(ni => {
+                    var desc = (ni.Description + " " + ni.Name).ToLowerInvariant();
+                    return !desc.Contains("virtual") &&
+                           !desc.Contains("vethernet") &&
+                           !desc.Contains("wsl") &&
+                           !desc.Contains("vmware") &&
+                           !desc.Contains("virtualbox") &&
+                           !desc.Contains("hyper-v") &&
+                           !desc.Contains("docker");
+                })
+                .ToList();
 
+            // First check interfaces with an active gateway
+            foreach (var ni in interfaces.Where(ni => ni.GetIPProperties().GatewayAddresses.Any(g => !g.Address.Equals(IPAddress.Any))))
+            {
                 foreach (var ip in ni.GetIPProperties().UnicastAddresses)
                 {
-                    if (ip.Address.AddressFamily == AddressFamily.InterNetwork)
+                    if (ip.Address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip.Address))
+                    {
+                        return ip.Address.ToString();
+                    }
+                }
+            }
+
+            // Fallback to any physical interface
+            foreach (var ni in interfaces)
+            {
+                foreach (var ip in ni.GetIPProperties().UnicastAddresses)
+                {
+                    if (ip.Address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip.Address))
                     {
                         return ip.Address.ToString();
                     }

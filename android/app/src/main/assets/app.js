@@ -141,10 +141,30 @@ async function initApp() {
   setupIPCListeners();
 }
 
+// Helper to completely reset transfer dashboard UI
+function resetTransferUI() {
+  const speedEl = document.getElementById('metricSpeed');
+  const etaEl = document.getElementById('metricEta');
+  const filesEl = document.getElementById('metricFilesProgress');
+  const progressFill = document.getElementById('progressBarFill');
+  const progressBytes = document.getElementById('progressBytesText');
+  const progressPercent = document.getElementById('progressPercentText');
+  const currentFileName = document.getElementById('currentFileNameText');
+
+  if (speedEl) speedEl.textContent = '0.0 MB/s';
+  if (etaEl) etaEl.textContent = 'Calculating...';
+  if (filesEl) filesEl.textContent = '0 / 0 Files';
+  if (progressFill) progressFill.style.width = '0%';
+  if (progressPercent) progressPercent.textContent = '0%';
+  if (progressBytes) progressBytes.textContent = '0 MB / 0 MB';
+  if (currentFileName) currentFileName.textContent = 'Initializing transfer session...';
+}
+
 function setupEventListeners() {
   // 1. Home: Choose Send
   document.getElementById('btnChooseSend')?.addEventListener('click', async () => {
     State.mode = 'sender';
+    resetTransferUI();
     const files = await window.ezshare.selectFiles();
     if (files && files.length > 0) {
       State.stagedFiles = [...files];
@@ -156,23 +176,20 @@ function setupEventListeners() {
   // 2. Home: Choose Receive
   document.getElementById('btnChooseReceive')?.addEventListener('click', async () => {
     State.mode = 'receiver';
-    const folder = await window.ezshare.selectDirectory();
-    if (folder) {
-      State.receiverFolder = folder;
-      await startReceiving(folder);
-    }
+    resetTransferUI();
+    await startReceiving(State.receiverFolder || "");
   });
 
   // 3. Staging Actions
   document.getElementById('btnBackFromStaging')?.addEventListener('click', () => {
     State.stagedFiles = [];
+    resetTransferUI();
     switchView('viewHome');
   });
 
   document.getElementById('btnAddMoreFiles')?.addEventListener('click', async () => {
     const moreFiles = await window.ezshare.selectFiles();
     if (moreFiles && moreFiles.length > 0) {
-      // Deduplicate by path
       const existingPaths = new Set(State.stagedFiles.map(f => f.path));
       for (const f of moreFiles) {
         if (!existingPaths.has(f.path)) {
@@ -198,6 +215,7 @@ function setupEventListeners() {
   // 5. Receiver Actions
   document.getElementById('btnStopReceiver')?.addEventListener('click', async () => {
     await window.ezshare.stopReceiver();
+    resetTransferUI();
     switchView('viewHome');
   });
 
@@ -212,8 +230,9 @@ function setupEventListeners() {
   });
 
   // 6. Transfer Actions
-  document.getElementById('btnCancelTransfer')?.addEventListener('click', () => {
-    window.ezshare.cancelSend();
+  document.getElementById('btnCancelTransfer')?.addEventListener('click', async () => {
+    try { await window.ezshare.cancelSend(); } catch (e) {}
+    resetTransferUI();
     switchView('viewHome');
   });
 
@@ -227,6 +246,7 @@ function setupEventListeners() {
   document.getElementById('btnReturnHome')?.addEventListener('click', () => {
     State.stagedFiles = [];
     State.transferSummary = null;
+    resetTransferUI();
     switchView('viewHome');
   });
 }
@@ -234,12 +254,23 @@ function setupEventListeners() {
 // Start Receiver Engine
 async function startReceiving(folder) {
   try {
-    const res = await window.ezshare.startReceiver(folder);
-    const nameEl = document.getElementById('receiverDeviceNameText');
-    const pathEl = document.getElementById('receiverSavePathText');
-    if (nameEl) nameEl.textContent = State.localInfo.deviceName;
-    if (pathEl) pathEl.textContent = folder;
-    switchView('viewReceiverReady');
+    const res = await window.ezshare.startReceiver(folder || "");
+    if (res && res.destinationFolder) {
+      State.receiverFolder = res.destinationFolder;
+      const nameEl = document.getElementById('receiverDeviceNameText');
+      const pathEl = document.getElementById('receiverSavePathText');
+      if (nameEl) nameEl.textContent = State.localInfo.deviceName;
+      if (pathEl) pathEl.textContent = res.destinationFolder;
+      switchView('viewReceiverReady');
+    } else {
+      const picked = await window.ezshare.selectDirectory();
+      if (picked) {
+        State.receiverFolder = picked;
+        await startReceiving(picked);
+      } else {
+        switchView('viewHome');
+      }
+    }
   } catch (err) {
     alert(`Could not start receiver: ${err.message}`);
   }
@@ -348,6 +379,7 @@ function renderDiscoveredDevices(devices) {
 
 // Initiate Transfer from Sender
 async function initiateTransferToDevice(targetDevice) {
+  resetTransferUI();
   const transferTitle = document.getElementById('transferTitle');
   const transferTargetSub = document.getElementById('transferTargetSub');
   if (transferTitle) transferTitle.textContent = 'Sending Files...';
@@ -359,6 +391,7 @@ async function initiateTransferToDevice(targetDevice) {
     await window.ezshare.sendFiles(targetDevice, State.stagedFiles);
   } catch (err) {
     alert(`Transfer error: ${err.message}`);
+    resetTransferUI();
     switchView('viewSenderDiscovery');
   }
 }
@@ -375,6 +408,7 @@ function setupIPCListeners() {
 
   // Transfer requested by remote sender
   window.ezshare.onTransferRequested((data) => {
+    resetTransferUI();
     const transferTitle = document.getElementById('transferTitle');
     const transferTargetSub = document.getElementById('transferTargetSub');
     if (transferTitle) transferTitle.textContent = 'Receiving Files...';

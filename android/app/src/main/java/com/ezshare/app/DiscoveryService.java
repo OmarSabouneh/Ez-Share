@@ -200,8 +200,8 @@ public class DiscoveryService {
                         info.id = id;
                         info.name = dev.optString("name", "Device");
                         info.os = dev.optString("os", "unknown");
-                        String ip = dev.optString("ip");
-                        info.ip = (ip.isEmpty() || "127.0.0.1".equals(ip)) ? senderIp.getHostAddress() : ip;
+                        // Always use the physical network packet source address for 100% reliable LAN connection
+                        info.ip = senderIp.getHostAddress();
                         info.port = dev.optInt("port", 53318);
                         info.lastSeen = System.currentTimeMillis();
 

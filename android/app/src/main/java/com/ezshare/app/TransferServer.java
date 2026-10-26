@@ -1,7 +1,9 @@
 package com.ezshare.app;
 
 import android.content.Context;
+import android.media.MediaScannerConnection;
 import android.net.Uri;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -11,6 +13,8 @@ import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -38,7 +42,7 @@ public class TransferServer {
     private ServerSocket serverSocket;
     private Thread serverThread;
     private volatile boolean isRunning = false;
-    private Uri destinationTreeUri;
+    private String destinationFolder;
 
     private JSONObject currentSession;
     private long totalBytesReceived = 0;
@@ -50,8 +54,8 @@ public class TransferServer {
         this.callback = callback;
     }
 
-    public synchronized int start(Uri destinationFolder, int preferredPort) {
-        this.destinationTreeUri = destinationFolder;
+    public synchronized int start(String destinationFolder, int preferredPort) {
+        this.destinationFolder = destinationFolder;
         this.port = preferredPort;
         this.isRunning = true;
 
@@ -68,8 +72,16 @@ public class TransferServer {
         return this.port;
     }
 
+    public synchronized int start(Uri destinationFolder, int preferredPort) {
+        return start(destinationFolder != null ? destinationFolder.toString() : null, preferredPort);
+    }
+
+    public void setDestinationFolder(String newFolder) {
+        this.destinationFolder = newFolder;
+    }
+
     public void setDestinationFolder(Uri newFolder) {
-        this.destinationTreeUri = newFolder;
+        this.destinationFolder = newFolder != null ? newFolder.toString() : null;
     }
 
     private void listenLoop() {
@@ -107,6 +119,11 @@ public class TransferServer {
                 if (colon > 0) {
                     headers.put(line.substring(0, colon).trim().toLowerCase(), line.substring(colon + 1).trim());
                 }
+            }
+
+            if ("100-continue".equalsIgnoreCase(headers.get("expect"))) {
+                out.write("HTTP/1.1 100 Continue\r\n\r\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
             }
 
             long contentLength = 0;
@@ -149,19 +166,41 @@ public class TransferServer {
                     }
                 }
 
-                DocumentFile dir = DocumentFile.fromTreeUri(context, destinationTreeUri);
-                if (dir == null || !dir.canWrite()) {
-                    sendHttpResponse(out, 500, "Error", "application/json", "{\"error\":\"Cannot write to destination\"}");
+                OutputStream fileOut = null;
+                File physicalFile = null;
+
+                if (destinationFolder != null && destinationFolder.startsWith("content://")) {
+                    DocumentFile dir = DocumentFile.fromTreeUri(context, Uri.parse(destinationFolder));
+                    if (dir == null || !dir.canWrite()) {
+                        sendHttpResponse(out, 500, "Error", "application/json", "{\"error\":\"Cannot write to destination\"}");
+                        return;
+                    }
+
+                    DocumentFile targetFile = dir.createFile("application/octet-stream", fileName);
+                    if (targetFile == null) {
+                        sendHttpResponse(out, 500, "Error", "application/json", "{\"error\":\"File creation failed\"}");
+                        return;
+                    }
+                    fileOut = context.getContentResolver().openOutputStream(targetFile.getUri());
+                } else {
+                    String folderPath = (destinationFolder != null && !destinationFolder.isEmpty())
+                            ? destinationFolder
+                            : new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "EzShare").getAbsolutePath();
+
+                    File dir = new File(folderPath);
+                    if (!dir.exists()) {
+                        dir.mkdirs();
+                    }
+                    physicalFile = new File(dir, fileName);
+                    fileOut = new FileOutputStream(physicalFile);
+                }
+
+                if (fileOut == null) {
+                    sendHttpResponse(out, 500, "Error", "application/json", "{\"error\":\"Could not open destination stream\"}");
                     return;
                 }
 
-                DocumentFile targetFile = dir.createFile("application/octet-stream", fileName);
-                if (targetFile == null) {
-                    sendHttpResponse(out, 500, "Error", "application/json", "{\"error\":\"File creation failed\"}");
-                    return;
-                }
-
-                try (OutputStream fileOut = context.getContentResolver().openOutputStream(targetFile.getUri())) {
+                try (OutputStream outStream = fileOut) {
                     byte[] buffer = new byte[1024 * 1024];
                     long remaining = contentLength;
                     long lastTelemetry = System.currentTimeMillis();
@@ -172,7 +211,7 @@ public class TransferServer {
                         int r = in.read(buffer, 0, toRead);
                         if (r <= 0) break;
 
-                        if (fileOut != null) fileOut.write(buffer, 0, r);
+                        outStream.write(buffer, 0, r);
                         remaining -= r;
                         totalBytesReceived += r;
                         bytesSinceTelemetry += r;
@@ -198,6 +237,11 @@ public class TransferServer {
                             bytesSinceTelemetry = 0;
                         }
                     }
+                    fileOut.flush();
+                }
+
+                if (physicalFile != null) {
+                    MediaScannerConnection.scanFile(context, new String[]{physicalFile.getAbsolutePath()}, null, null);
                 }
 
                 sendHttpResponse(out, 200, "OK", "application/json", "{\"success\":true}");
