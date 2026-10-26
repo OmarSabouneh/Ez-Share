@@ -1151,3 +1151,191 @@ button {
     max-width: 160px;
   }
 }
+
+/* ==========================================================================
+   4-Digit Pairing Code Display & Modal Styles
+   ========================================================================== */
+
+.pair-code-display-box {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: var(--radius-md);
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 20px -4px rgba(99, 102, 241, 0.2);
+  margin: 6px 0;
+}
+
+.pair-code-badge-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent-indigo);
+  text-transform: uppercase;
+}
+
+.pair-code-digits {
+  display: flex;
+  gap: 12px;
+  margin: 4px 0;
+}
+
+.code-box {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--accent-indigo);
+  color: #FFFFFF;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 2rem;
+  font-weight: 700;
+  width: 52px;
+  height: 58px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 16px -2px rgba(99, 102, 241, 0.4);
+  letter-spacing: 0;
+}
+
+.pair-code-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Modal Backdrop & Card */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 15, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  animation: fadeInModal 0.2s ease-out;
+}
+
+@keyframes fadeInModal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.8), 0 0 30px -5px rgba(99, 102, 241, 0.25);
+  border-radius: var(--radius-lg);
+  padding: 32px 28px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  box-sizing: border-box;
+}
+
+.modal-icon-badge {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-card h3 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.modal-card p {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.pair-input-container {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.pair-code-input {
+  width: 180px;
+  height: 60px;
+  background: var(--bg-surface);
+  border: 2px solid var(--accent-indigo);
+  border-radius: 12px;
+  color: #FFFFFF;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 2.2rem;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 12px;
+  padding-left: 12px;
+  outline: none;
+  box-shadow: 0 0 20px -2px rgba(99, 102, 241, 0.3);
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.pair-code-input:focus {
+  border-color: #818CF8;
+  box-shadow: 0 0 25px 0 rgba(99, 102, 241, 0.5);
+}
+
+.pair-code-error {
+  color: #F87171;
+  font-size: 0.82rem;
+  font-weight: 500;
+  margin-top: -6px;
+}
+
+.modal-button-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.modal-button-row button {
+  flex: 1;
+}
+
+/* Toast Notifications */
+.toast-popup {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1E293B;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  border-radius: 100px;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 2000;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #F1F5F9;
+  animation: slideUpToast 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+@keyframes slideUpToast {
+  from { opacity: 0; transform: translate(-50%, 15px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

@@ -129,6 +129,13 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
+            public void onTransferCancelled(String reason) {
+                JSONObject obj = new JSONObject();
+                try { obj.put("reason", reason); } catch (Exception ignored) {}
+                dispatchJsEvent("transfer-cancelled", obj.toString());
+            }
+
+            @Override
             public void onError(String message) {
                 dispatchJsEvent("error", "\"" + message + "\"");
             }
@@ -143,6 +150,13 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onTransferComplete(String json) {
                 dispatchJsEvent("transfer-complete", json);
+            }
+
+            @Override
+            public void onTransferCancelled(String reason) {
+                JSONObject obj = new JSONObject();
+                try { obj.put("reason", reason); } catch (Exception ignored) {}
+                dispatchJsEvent("transfer-cancelled", obj.toString());
             }
 
             @Override
@@ -260,13 +274,16 @@ public class MainActivity extends AppCompatActivity {
                             JSONObject dev = p.getJSONObject("targetDevice");
                             String ip = dev.getString("ip");
                             int port = dev.getInt("port");
+                            String pairCode = p.optString("pairCode", "");
                             discoveryService.stopSearching();
-                            transferClient.sendFiles(ip, port, selectedFileUris, discoveryService.getDeviceName());
+                            transferClient.sendFiles(ip, port, selectedFileUris, discoveryService.getDeviceName(), pairCode);
                             resolvePendingJs(id, "true");
                             break;
 
                         case "cancelSend":
+                        case "cancelTransfer":
                             transferClient.cancel();
+                            transferServer.cancelActiveTransfer();
                             resolvePendingJs(id, "true");
                             break;
 
@@ -292,6 +309,7 @@ public class MainActivity extends AppCompatActivity {
                             JSONObject res = new JSONObject();
                             res.put("port", assignedPort);
                             res.put("destinationFolder", targetFolder);
+                            res.put("pairCode", transferServer.getPairCode());
                             resolvePendingJs(id, res.toString());
                             break;
 

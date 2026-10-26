@@ -36,10 +36,14 @@ public partial class MainWindow : Window
             var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
             if (File.Exists(iconPath))
             {
-                Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri(iconPath));
+                var bmp = new System.Windows.Media.Imaging.BitmapImage(new Uri(iconPath));
+                Icon = bmp;
+                TitleBarIcon.Source = bmp;
             }
         }
         catch { }
+
+        StateChanged += (s, e) => UpdateMaximizeIcon();
 
         WireUpEvents();
 
@@ -85,6 +89,15 @@ public partial class MainWindow : Window
             });
         };
 
+        _transferServer.TransferCancelled += (reason) =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var json = JsonSerializer.Serialize(new { reason });
+                DispatchJsEvent("transfer-cancelled", json);
+            });
+        };
+
         _transferClient.TransferProgress += (prog) =>
         {
             Dispatcher.Invoke(() =>
@@ -100,6 +113,24 @@ public partial class MainWindow : Window
             {
                 var json = JsonSerializer.Serialize(summary);
                 DispatchJsEvent("transfer-complete", json);
+            });
+        };
+
+        _transferClient.TransferCancelled += (reason) =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var json = JsonSerializer.Serialize(new { reason });
+                DispatchJsEvent("transfer-cancelled", json);
+            });
+        };
+
+        _transferClient.TransferFailed += (reason) =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var json = JsonSerializer.Serialize(new { reason });
+                DispatchJsEvent("transfer-failed", json);
             });
         };
     }
@@ -160,8 +191,9 @@ public partial class MainWindow : Window
                 getLocalInfo: () => callNative('getLocalInfo'),
                 startDiscovery: () => callNative('startDiscovery'),
                 stopDiscovery: () => callNative('stopDiscovery'),
-                sendFiles: (targetDevice, files) => callNative('sendFiles', { targetDevice, files }),
+                sendFiles: (targetDevice, files, pairCode) => callNative('sendFiles', { targetDevice, files, pairCode }),
                 cancelSend: () => callNative('cancelSend'),
+                cancelTransfer: () => callNative('cancelTransfer'),
                 startReceiver: (folder) => callNative('startReceiver', folder),
                 stopReceiver: () => callNative('stopReceiver'),
                 changeDestinationFolder: (folder) => callNative('changeDestinationFolder', folder),
@@ -181,6 +213,14 @@ public partial class MainWindow : Window
                 onTransferRequested: (cb) => {
                     _listeners['transfer-requested'] = _listeners['transfer-requested'] || [];
                     _listeners['transfer-requested'].push(cb);
+                },
+                onTransferCancelled: (cb) => {
+                    _listeners['transfer-cancelled'] = _listeners['transfer-cancelled'] || [];
+                    _listeners['transfer-cancelled'].push(cb);
+                },
+                onTransferFailed: (cb) => {
+                    _listeners['transfer-failed'] = _listeners['transfer-failed'] || [];
+                    _listeners['transfer-failed'].push(cb);
                 },
                 onError: (cb) => {
                     _listeners['error'] = _listeners['error'] || [];
@@ -258,6 +298,7 @@ public partial class MainWindow : Window
                         var ip = devElem.GetProperty("ip").GetString() ?? "";
                         var port = devElem.GetProperty("port").GetInt32();
                         var filesElem = payload.GetProperty("files");
+                        string pairCode = payload.TryGetProperty("pairCode", out var pc) ? pc.GetString() ?? "" : "";
 
                         var staged = new List<StagedFile>();
                         foreach (var f in filesElem.EnumerateArray())
@@ -270,11 +311,13 @@ public partial class MainWindow : Window
                         }
 
                         _discoveryService.StopSearching();
-                        result = await _transferClient.SendFilesAsync(ip, port, staged, _deviceName);
+                        result = await _transferClient.SendFilesAsync(ip, port, staged, _deviceName, pairCode);
                         break;
 
                     case "cancelSend":
+                    case "cancelTransfer":
                         _transferClient.Cancel();
+                        _transferServer.CancelActiveTransfer();
                         result = true;
                         break;
 
@@ -290,7 +333,7 @@ public partial class MainWindow : Window
                         }
                         int assignedPort = _transferServer.Start(destFolder);
                         _discoveryService.SetReceiverReady(true, assignedPort);
-                        result = new { port = assignedPort, destinationFolder = destFolder };
+                        result = new { port = assignedPort, destinationFolder = destFolder, pairCode = _transferServer.PairCode };
                         break;
 
                     case "stopReceiver":
@@ -424,6 +467,49 @@ public partial class MainWindow : Window
             File.WriteAllText(configPath, json);
         }
         catch { }
+    }
+
+    private void BtnMinimize_Click(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState.Minimized;
+    }
+
+    private void BtnMaximize_Click(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        UpdateMaximizeIcon();
+    }
+
+    private void BtnClose_Click(object sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+
+    private void CustomTitleBar_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2)
+        {
+            BtnMaximize_Click(sender, e);
+        }
+        else if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed)
+        {
+            DragMove();
+        }
+    }
+
+    private void UpdateMaximizeIcon()
+    {
+        if (MaximizeIcon != null)
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                MaximizeIcon.Data = System.Windows.Media.Geometry.Parse("M 2,0 L 10,0 10,8 8,8 8,10 0,10 0,2 2,2 Z M 2,2 L 8,2 8,8 2,8 Z");
+            }
+            else
+            {
+                MaximizeIcon.Data = System.Windows.Media.Geometry.Parse("M 0,0 L 10,0 10,10 0,10 Z");
+            }
+        }
     }
 
     private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)

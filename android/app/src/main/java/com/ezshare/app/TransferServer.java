@@ -32,6 +32,7 @@ public class TransferServer {
         void onTransferRequested(String json);
         void onTransferProgress(String json);
         void onTransferComplete(String json);
+        void onTransferCancelled(String reason);
         void onError(String message);
     }
 
@@ -43,6 +44,7 @@ public class TransferServer {
     private Thread serverThread;
     private volatile boolean isRunning = false;
     private String destinationFolder;
+    private String pairCode = "";
 
     private JSONObject currentSession;
     private long totalBytesReceived = 0;
@@ -58,6 +60,7 @@ public class TransferServer {
         this.destinationFolder = destinationFolder;
         this.port = preferredPort;
         this.isRunning = true;
+        this.pairCode = String.format(java.util.Locale.US, "%04d", new java.util.Random().nextInt(9000) + 1000);
 
         for (int p = preferredPort; p < preferredPort + 10; p++) {
             try {
@@ -70,6 +73,15 @@ public class TransferServer {
         serverThread = new Thread(this::listenLoop);
         serverThread.start();
         return this.port;
+    }
+
+    public String getPairCode() {
+        return pairCode;
+    }
+
+    public void cancelActiveTransfer() {
+        currentSession = null;
+        mainHandler.post(() -> callback.onTransferCancelled("Transfer cancelled by user."));
     }
 
     public synchronized int start(Uri destinationFolder, int preferredPort) {
@@ -132,6 +144,14 @@ public class TransferServer {
                 try { contentLength = Long.parseLong(clStr); } catch (Exception ignored) {}
             }
 
+            // Handle Cancel notification from remote sender
+            if ("POST".equalsIgnoreCase(method) && rawUrl.startsWith("/api/transfer/cancel")) {
+                currentSession = null;
+                mainHandler.post(() -> callback.onTransferCancelled("Transfer cancelled by peer."));
+                sendHttpResponse(out, 200, "OK", "application/json", "{\"cancelled\":true}");
+                return;
+            }
+
             // Handshake
             if ("POST".equalsIgnoreCase(method) && rawUrl.startsWith("/api/transfer/handshake")) {
                 byte[] body = new byte[(int) contentLength];
@@ -143,6 +163,15 @@ public class TransferServer {
                 }
                 String bodyStr = new String(body, StandardCharsets.UTF_8);
                 currentSession = new JSONObject(bodyStr);
+
+                // Verify 4-digit pairing code
+                String senderCode = currentSession.optString("pairCode", "").trim();
+                if (this.pairCode != null && !this.pairCode.isEmpty() && !this.pairCode.equals(senderCode)) {
+                    currentSession = null;
+                    sendHttpResponse(out, 403, "Forbidden", "application/json", "{\"accepted\":false,\"error\":\"Invalid 4-digit pairing code.\"}");
+                    return;
+                }
+
                 totalBytesReceived = 0;
                 sessionStartTime = System.currentTimeMillis();
 
@@ -168,6 +197,7 @@ public class TransferServer {
 
                 OutputStream fileOut = null;
                 File physicalFile = null;
+                DocumentFile targetFile = null;
 
                 if (destinationFolder != null && destinationFolder.startsWith("content://")) {
                     DocumentFile dir = DocumentFile.fromTreeUri(context, Uri.parse(destinationFolder));
@@ -176,7 +206,7 @@ public class TransferServer {
                         return;
                     }
 
-                    DocumentFile targetFile = dir.createFile("application/octet-stream", fileName);
+                    targetFile = dir.createFile("application/octet-stream", fileName);
                     if (targetFile == null) {
                         sendHttpResponse(out, 500, "Error", "application/json", "{\"error\":\"File creation failed\"}");
                         return;
@@ -200,6 +230,7 @@ public class TransferServer {
                     return;
                 }
 
+                boolean fileCompleted = false;
                 try (OutputStream outStream = fileOut) {
                     byte[] buffer = new byte[1024 * 1024];
                     long remaining = contentLength;
@@ -237,7 +268,28 @@ public class TransferServer {
                             bytesSinceTelemetry = 0;
                         }
                     }
-                    fileOut.flush();
+                    outStream.flush();
+                    fileCompleted = (remaining == 0);
+                } catch (Exception ex) {
+                    fileCompleted = false;
+                } finally {
+                    if (!fileCompleted) {
+                        try {
+                            if (physicalFile != null && physicalFile.exists()) {
+                                physicalFile.delete();
+                            } else if (targetFile != null && targetFile.exists()) {
+                                targetFile.delete();
+                            }
+                        } catch (Exception ignored) {}
+
+                        currentSession = null;
+                        mainHandler.post(() -> callback.onTransferCancelled("Transfer interrupted or cancelled. Incomplete file deleted."));
+                    }
+                }
+
+                if (!fileCompleted) {
+                    sendHttpResponse(out, 500, "Error", "application/json", "{\"error\":\"File transfer interrupted\"}");
+                    return;
                 }
 
                 if (physicalFile != null) {

@@ -33,8 +33,9 @@ if (window.AndroidHost && !window.ezshare) {
     getLocalInfo: () => callAndroid('getLocalInfo'),
     startDiscovery: () => callAndroid('startDiscovery'),
     stopDiscovery: () => callAndroid('stopDiscovery'),
-    sendFiles: (targetDevice, files) => callAndroid('sendFiles', { targetDevice, files }),
+    sendFiles: (targetDevice, files, pairCode) => callAndroid('sendFiles', { targetDevice, files, pairCode }),
     cancelSend: () => callAndroid('cancelSend'),
+    cancelTransfer: () => callAndroid('cancelTransfer'),
     startReceiver: (folder) => callAndroid('startReceiver', folder),
     stopReceiver: () => callAndroid('stopReceiver'),
     changeDestinationFolder: (folder) => callAndroid('changeDestinationFolder', folder),
@@ -54,6 +55,14 @@ if (window.AndroidHost && !window.ezshare) {
     onTransferRequested: (cb) => {
       _listeners['transfer-requested'] = _listeners['transfer-requested'] || [];
       _listeners['transfer-requested'].push(cb);
+    },
+    onTransferCancelled: (cb) => {
+      _listeners['transfer-cancelled'] = _listeners['transfer-cancelled'] || [];
+      _listeners['transfer-cancelled'].push(cb);
+    },
+    onTransferFailed: (cb) => {
+      _listeners['transfer-failed'] = _listeners['transfer-failed'] || [];
+      _listeners['transfer-failed'].push(cb);
     },
     onError: (cb) => {
       _listeners['error'] = _listeners['error'] || [];
@@ -112,6 +121,26 @@ function formatTime(seconds) {
   return `~${mins}m ${secs}s`;
 }
 
+// Global Toast Popup Helper
+let _toastTimer = null;
+function showToast(message, type = 'info') {
+  const toast = document.getElementById('toastNotification');
+  const toastMsg = document.getElementById('toastMessage');
+  const toastIcon = document.getElementById('toastIcon');
+  if (!toast || !toastMsg) return;
+
+  toastMsg.textContent = message;
+  if (toastIcon) {
+    toastIcon.textContent = type === 'error' ? '❌' : (type === 'success' ? '✅' : 'ℹ️');
+  }
+
+  toast.style.display = 'flex';
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => {
+    toast.style.display = 'none';
+  }, 4000);
+}
+
 // Navigation helper
 function switchView(targetViewId) {
   Object.values(views).forEach(v => {
@@ -158,6 +187,53 @@ function resetTransferUI() {
   if (progressPercent) progressPercent.textContent = '0%';
   if (progressBytes) progressBytes.textContent = '0 MB / 0 MB';
   if (currentFileName) currentFileName.textContent = 'Initializing transfer session...';
+}
+
+// Stored device awaiting 4-digit security code input
+let _pendingDevice = null;
+
+function promptPairCode(targetDevice) {
+  _pendingDevice = targetDevice;
+  const modal = document.getElementById('pairCodeModal');
+  const input = document.getElementById('pairCodeInput');
+  const error = document.getElementById('pairCodeError');
+  const subtitle = document.getElementById('pairModalSubtitle');
+  if (!modal || !input) return;
+
+  if (subtitle) {
+    subtitle.textContent = `Enter the 4-digit code shown on ${targetDevice.name}`;
+  }
+  input.value = '';
+  if (error) error.style.display = 'none';
+  modal.style.display = 'flex';
+  setTimeout(() => input.focus(), 80);
+}
+
+function hidePairCodeModal() {
+  const modal = document.getElementById('pairCodeModal');
+  if (modal) modal.style.display = 'none';
+  _pendingDevice = null;
+}
+
+async function confirmPairCode() {
+  const input = document.getElementById('pairCodeInput');
+  const error = document.getElementById('pairCodeError');
+  const code = input ? input.value.trim() : '';
+
+  if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
+    if (error) {
+      error.textContent = 'Please enter a valid 4-digit numeric code.';
+      error.style.display = 'block';
+    }
+    return;
+  }
+
+  const target = _pendingDevice;
+  hidePairCodeModal();
+
+  if (target) {
+    await initiateTransferToDevice(target, code);
+  }
 }
 
 function setupEventListeners() {
@@ -229,11 +305,22 @@ function setupEventListeners() {
     }
   });
 
-  // 6. Transfer Actions
+  // 6. Transfer Actions (Cancel Transfer)
   document.getElementById('btnCancelTransfer')?.addEventListener('click', async () => {
-    try { await window.ezshare.cancelSend(); } catch (e) {}
+    try {
+      if (window.ezshare.cancelTransfer) {
+        await window.ezshare.cancelTransfer();
+      } else if (window.ezshare.cancelSend) {
+        await window.ezshare.cancelSend();
+      }
+    } catch (e) {}
+    showToast('Transfer cancelled. Incomplete files removed.', 'info');
     resetTransferUI();
-    switchView('viewHome');
+    if (State.mode === 'receiver') {
+      switchView('viewReceiverReady');
+    } else {
+      switchView('viewSenderFiles');
+    }
   });
 
   // 7. Complete Actions
@@ -249,6 +336,24 @@ function setupEventListeners() {
     resetTransferUI();
     switchView('viewHome');
   });
+
+  // 8. Pairing Code Modal Actions
+  document.getElementById('btnCancelPairModal')?.addEventListener('click', hidePairCodeModal);
+  document.getElementById('btnConfirmPairCode')?.addEventListener('click', confirmPairCode);
+
+  const pairInput = document.getElementById('pairCodeInput');
+  if (pairInput) {
+    pairInput.addEventListener('input', (e) => {
+      e.target.value = e.target.value.replace(/[^0-9]/g, '');
+    });
+    pairInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        confirmPairCode();
+      } else if (e.key === 'Escape') {
+        hidePairCodeModal();
+      }
+    });
+  }
 }
 
 // Start Receiver Engine
@@ -261,6 +366,16 @@ async function startReceiving(folder) {
       const pathEl = document.getElementById('receiverSavePathText');
       if (nameEl) nameEl.textContent = State.localInfo.deviceName;
       if (pathEl) pathEl.textContent = res.destinationFolder;
+
+      // Update 4-digit code display
+      if (res.pairCode) {
+        const digits = String(res.pairCode).split('');
+        for (let i = 0; i < 4; i++) {
+          const digitEl = document.getElementById(`codeDigit${i + 1}`);
+          if (digitEl) digitEl.textContent = digits[i] || '-';
+        }
+      }
+
       switchView('viewReceiverReady');
     } else {
       const picked = await window.ezshare.selectDirectory();
@@ -369,16 +484,17 @@ function renderDiscoveredDevices(devices) {
       </div>
     `;
 
+    // Click prompts pairing code modal instead of immediate unauthenticated send
     card.addEventListener('click', () => {
-      initiateTransferToDevice(device);
+      promptPairCode(device);
     });
 
     grid.appendChild(card);
   });
 }
 
-// Initiate Transfer from Sender
-async function initiateTransferToDevice(targetDevice) {
+// Initiate Transfer from Sender with 4-Digit Security Code
+async function initiateTransferToDevice(targetDevice, pairCode) {
   resetTransferUI();
   const transferTitle = document.getElementById('transferTitle');
   const transferTargetSub = document.getElementById('transferTargetSub');
@@ -388,9 +504,10 @@ async function initiateTransferToDevice(targetDevice) {
   switchView('viewTransferActive');
 
   try {
-    await window.ezshare.sendFiles(targetDevice, State.stagedFiles);
+    await window.ezshare.sendFiles(targetDevice, State.stagedFiles, pairCode);
   } catch (err) {
-    alert(`Transfer error: ${err.message}`);
+    const msg = err.message || String(err);
+    showToast(`Transfer error: ${msg}`, 'error');
     resetTransferUI();
     switchView('viewSenderDiscovery');
   }
@@ -448,6 +565,34 @@ function setupIPCListeners() {
     }
   });
 
+  // Transfer Cancelled (from remote peer or self)
+  if (window.ezshare.onTransferCancelled) {
+    window.ezshare.onTransferCancelled((data) => {
+      const reason = (data && data.reason) ? data.reason : 'Transfer cancelled. Incomplete file removed.';
+      showToast(reason, 'info');
+      resetTransferUI();
+      if (State.mode === 'receiver') {
+        switchView('viewReceiverReady');
+      } else {
+        switchView('viewSenderFiles');
+      }
+    });
+  }
+
+  // Transfer Failed
+  if (window.ezshare.onTransferFailed) {
+    window.ezshare.onTransferFailed((data) => {
+      const reason = (data && data.reason) ? data.reason : 'Transfer failed.';
+      showToast(reason, 'error');
+      resetTransferUI();
+      if (State.mode === 'receiver') {
+        switchView('viewReceiverReady');
+      } else {
+        switchView('viewSenderFiles');
+      }
+    });
+  }
+
   // Transfer Complete
   window.ezshare.onTransferComplete((summary) => {
     State.transferSummary = summary;
@@ -495,7 +640,7 @@ function setupIPCListeners() {
 
   // Error notifications
   window.ezshare.onError((err) => {
-    alert(`Error: ${err}`);
+    showToast(`Error: ${err}`, 'error');
   });
 }
 

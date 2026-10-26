@@ -37,6 +37,9 @@ public class HandshakeRequest
 
     [JsonPropertyName("files")]
     public List<FileManifestItem> Files { get; set; } = new();
+
+    [JsonPropertyName("pairCode")]
+    public string? PairCode { get; set; }
 }
 
 public class TransferProgressData
@@ -90,21 +93,25 @@ public class TransferServer : IDisposable
 
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _activeTransferCts;
     private string? _destinationFolder;
     private HandshakeRequest? _currentSession;
     private long _totalReceivedBytes;
     private DateTime _sessionStartTime;
 
     public int Port { get; private set; } = DefaultPort;
+    public string PairCode { get; private set; } = "";
 
     public event Action<HandshakeRequest>? TransferRequested;
     public event Action<TransferProgressData>? TransferProgress;
     public event Action<TransferCompleteSummary>? TransferComplete;
+    public event Action<string>? TransferCancelled;
 
     public int Start(string destinationFolder, int preferredPort = DefaultPort)
     {
         _destinationFolder = destinationFolder;
         _cts = new CancellationTokenSource();
+        PairCode = new Random().Next(1000, 10000).ToString();
 
         int port = preferredPort;
         while (port < preferredPort + 10)
@@ -129,6 +136,14 @@ public class TransferServer : IDisposable
     public void SetDestinationFolder(string newFolder)
     {
         _destinationFolder = newFolder;
+    }
+
+    public void CancelActiveTransfer()
+    {
+        _activeTransferCts?.Cancel();
+        _activeTransferCts = new CancellationTokenSource();
+        _currentSession = null;
+        TransferCancelled?.Invoke("Transfer cancelled by user.");
     }
 
     private async Task AcceptLoopAsync(CancellationToken token)
@@ -187,6 +202,17 @@ public class TransferServer : IDisposable
                     await stream.FlushAsync(token);
                 }
 
+                // Handle Cancel notification from remote sender
+                if (method.Equals("POST", StringComparison.OrdinalIgnoreCase) && rawUrl.StartsWith("/api/transfer/cancel"))
+                {
+                    _currentSession = null;
+                    _activeTransferCts?.Cancel();
+                    _activeTransferCts = new CancellationTokenSource();
+                    TransferCancelled?.Invoke("Transfer cancelled by peer.");
+                    await SendResponseAsync(stream, 200, "OK", "application/json", "{\"cancelled\":true}");
+                    return;
+                }
+
                 // Handle Handshake
                 if (method.Equals("POST", StringComparison.OrdinalIgnoreCase) && rawUrl.StartsWith("/api/transfer/handshake"))
                 {
@@ -201,6 +227,15 @@ public class TransferServer : IDisposable
 
                     var bodyJson = Encoding.UTF8.GetString(bodyBytes);
                     _currentSession = JsonSerializer.Deserialize<HandshakeRequest>(bodyJson) ?? new();
+
+                    // Verify 4-digit pairing code
+                    if (!string.IsNullOrEmpty(PairCode) && !string.Equals(_currentSession.PairCode?.Trim(), PairCode, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _currentSession = null;
+                        await SendResponseAsync(stream, 403, "Forbidden", "application/json", "{\"accepted\":false,\"error\":\"Invalid 4-digit pairing code.\"}");
+                        return;
+                    }
+
                     _totalReceivedBytes = 0;
                     _sessionStartTime = DateTime.UtcNow;
 
@@ -220,50 +255,88 @@ public class TransferServer : IDisposable
                     var fileName = !string.IsNullOrEmpty(encodedName) ? Uri.UnescapeDataString(encodedName) : "received_file";
 
                     var safePath = GetUniqueFilePath(_destinationFolder ?? AppDomain.CurrentDomain.BaseDirectory, fileName);
+                    bool fileCompleted = false;
+
+                    _activeTransferCts?.Dispose();
+                    _activeTransferCts = new CancellationTokenSource();
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, _activeTransferCts.Token);
+                    var streamToken = linkedCts.Token;
 
                     // Stream directly to disk with 1MB buffer
-                    using (var fs = new FileStream(safePath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true))
+                    try
                     {
-                        var buffer = new byte[1024 * 1024];
-                        long remaining = contentLength;
-                        var lastTelemetry = DateTime.UtcNow;
-                        long bytesSinceTelemetry = 0;
-                        int fileIdx = 1;
-
-                        while (remaining > 0)
+                        using (var fs = new FileStream(safePath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true))
                         {
-                            int toRead = (int)Math.Min(buffer.Length, remaining);
-                            int bytesRead = await reader.ReadAsync(buffer.AsMemory(0, toRead), token);
-                            if (bytesRead <= 0) break;
+                            var buffer = new byte[1024 * 1024];
+                            long remaining = contentLength;
+                            var lastTelemetry = DateTime.UtcNow;
+                            long bytesSinceTelemetry = 0;
+                            int fileIdx = 1;
 
-                            await fs.WriteAsync(buffer.AsMemory(0, bytesRead), token);
-                            remaining -= bytesRead;
-                            _totalReceivedBytes += bytesRead;
-                            bytesSinceTelemetry += bytesRead;
-
-                            var now = DateTime.UtcNow;
-                            var elapsed = (now - lastTelemetry).TotalSeconds;
-                            if (elapsed >= 0.3)
+                            while (remaining > 0)
                             {
-                                var speed = bytesSinceTelemetry / elapsed;
-                                var totalExpected = _currentSession?.TotalSizeBytes ?? contentLength;
-                                var percent = totalExpected > 0 ? Math.Min(100.0, ((double)_totalReceivedBytes / totalExpected) * 100.0) : 0;
+                                int toRead = (int)Math.Min(buffer.Length, remaining);
+                                int bytesRead = await reader.ReadAsync(buffer.AsMemory(0, toRead), streamToken);
+                                if (bytesRead <= 0) break;
 
-                                TransferProgress?.Invoke(new TransferProgressData
+                                await fs.WriteAsync(buffer.AsMemory(0, bytesRead), streamToken);
+                                remaining -= bytesRead;
+                                _totalReceivedBytes += bytesRead;
+                                bytesSinceTelemetry += bytesRead;
+
+                                var now = DateTime.UtcNow;
+                                var elapsed = (now - lastTelemetry).TotalSeconds;
+                                if (elapsed >= 0.3)
                                 {
-                                    Filename = fileName,
-                                    TotalBytesSentSoFar = _totalReceivedBytes,
-                                    TotalSizeBytes = totalExpected,
-                                    SpeedBytesPerSec = speed,
-                                    ProgressPercent = percent,
-                                    CurrentFileIndex = fileIdx,
-                                    TotalFiles = _currentSession?.TotalFiles ?? 1
-                                });
+                                    var speed = bytesSinceTelemetry / elapsed;
+                                    var totalExpected = _currentSession?.TotalSizeBytes ?? contentLength;
+                                    var percent = totalExpected > 0 ? Math.Min(100.0, ((double)_totalReceivedBytes / totalExpected) * 100.0) : 0;
 
-                                lastTelemetry = now;
-                                bytesSinceTelemetry = 0;
+                                    TransferProgress?.Invoke(new TransferProgressData
+                                    {
+                                        Filename = fileName,
+                                        TotalBytesSentSoFar = _totalReceivedBytes,
+                                        TotalSizeBytes = totalExpected,
+                                        SpeedBytesPerSec = speed,
+                                        ProgressPercent = percent,
+                                        CurrentFileIndex = fileIdx,
+                                        TotalFiles = _currentSession?.TotalFiles ?? 1
+                                    });
+
+                                    lastTelemetry = now;
+                                    bytesSinceTelemetry = 0;
+                                }
                             }
+
+                            fileCompleted = (remaining == 0);
                         }
+                    }
+                    catch
+                    {
+                        fileCompleted = false;
+                    }
+                    finally
+                    {
+                        if (!fileCompleted)
+                        {
+                            try
+                            {
+                                if (File.Exists(safePath))
+                                {
+                                    File.Delete(safePath);
+                                }
+                            }
+                            catch { }
+
+                            _currentSession = null;
+                            TransferCancelled?.Invoke("Transfer interrupted or cancelled. Incomplete file deleted.");
+                        }
+                    }
+
+                    if (!fileCompleted)
+                    {
+                        await SendResponseAsync(stream, 500, "Error", "application/json", "{\"error\":\"File transfer interrupted\"}");
+                        return;
                     }
 
                     await SendResponseAsync(stream, 200, "OK", "application/json", "{\"success\":true}");

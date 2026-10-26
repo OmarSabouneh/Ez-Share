@@ -20,9 +20,13 @@ public class TransferClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private CancellationTokenSource? _cts;
+    private string? _currentTargetIp;
+    private int _currentTargetPort;
 
     public event Action<TransferProgressData>? TransferProgress;
     public event Action<TransferCompleteSummary>? TransferComplete;
+    public event Action<string>? TransferCancelled;
+    public event Action<string>? TransferFailed;
 
     public TransferClient()
     {
@@ -35,47 +39,70 @@ public class TransferClient : IDisposable
     public void Cancel()
     {
         _cts?.Cancel();
+        if (!string.IsNullOrEmpty(_currentTargetIp) && _currentTargetPort > 0)
+        {
+            var cancelUrl = $"http://{_currentTargetIp}:{_currentTargetPort}/api/transfer/cancel";
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    using var content = new StringContent("{\"cancelled\":true}", Encoding.UTF8, "application/json");
+                    await _httpClient.PostAsync(cancelUrl, content, cts.Token);
+                }
+                catch { }
+            });
+        }
     }
 
-    public async Task<TransferCompleteSummary> SendFilesAsync(string targetIp, int targetPort, List<StagedFile> files, string senderName = "Windows Device")
+    public async Task<TransferCompleteSummary> SendFilesAsync(string targetIp, int targetPort, List<StagedFile> files, string senderName = "Windows Device", string pairCode = "")
     {
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
+        _currentTargetIp = targetIp;
+        _currentTargetPort = targetPort;
 
-        long totalSizeBytes = 0;
-        var manifestFiles = new List<FileManifestItem>();
-
-        for (int i = 0; i < files.Count; i++)
+        try
         {
-            var f = files[i];
-            var fi = new FileInfo(f.Path);
-            f.Size = fi.Length;
-            totalSizeBytes += f.Size;
+            long totalSizeBytes = 0;
+            var manifestFiles = new List<FileManifestItem>();
 
-            manifestFiles.Add(new FileManifestItem
+            for (int i = 0; i < files.Count; i++)
             {
-                Id = i.ToString(),
-                Name = f.Name,
-                Size = f.Size
-            });
-        }
+                var f = files[i];
+                var fi = new FileInfo(f.Path);
+                f.Size = fi.Length;
+                totalSizeBytes += f.Size;
 
-        var handshake = new HandshakeRequest
-        {
-            SenderName = senderName,
-            TotalFiles = files.Count,
-            TotalSizeBytes = totalSizeBytes,
-            Files = manifestFiles
-        };
+                manifestFiles.Add(new FileManifestItem
+                {
+                    Id = i.ToString(),
+                    Name = f.Name,
+                    Size = f.Size
+                });
+            }
 
-        // 1. Handshake
-        var handshakeUrl = $"http://{targetIp}:{targetPort}/api/transfer/handshake";
-        var handshakeJson = JsonSerializer.Serialize(handshake);
-        using (var content = new StringContent(handshakeJson, Encoding.UTF8, "application/json"))
-        {
-            var response = await _httpClient.PostAsync(handshakeUrl, content, token);
-            response.EnsureSuccessStatusCode();
-        }
+            var handshake = new HandshakeRequest
+            {
+                SenderName = senderName,
+                TotalFiles = files.Count,
+                TotalSizeBytes = totalSizeBytes,
+                Files = manifestFiles,
+                PairCode = pairCode
+            };
+
+            // 1. Handshake
+            var handshakeUrl = $"http://{targetIp}:{targetPort}/api/transfer/handshake";
+            var handshakeJson = JsonSerializer.Serialize(handshake);
+            using (var content = new StringContent(handshakeJson, Encoding.UTF8, "application/json"))
+            {
+                var response = await _httpClient.PostAsync(handshakeUrl, content, token);
+                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    throw new InvalidOperationException("Invalid 4-digit pairing code. Please verify the code shown on the receiving device.");
+                }
+                response.EnsureSuccessStatusCode();
+            }
 
         // 2. Stream Each File
         long totalSentBytes = 0;
@@ -136,19 +163,35 @@ public class TransferClient : IDisposable
             await _httpClient.PostAsync(completeUrl, compContent, token);
         }
 
-        var duration = (DateTime.UtcNow - startTime).TotalSeconds;
-        var avgSpeed = duration > 0 ? totalSizeBytes / duration : 0;
+            var duration = (DateTime.UtcNow - startTime).TotalSeconds;
+            var avgSpeed = duration > 0 ? totalSizeBytes / duration : 0;
 
-        var summary = new TransferCompleteSummary
+            var summary = new TransferCompleteSummary
+            {
+                TotalFiles = files.Count,
+                TotalSizeBytes = totalSizeBytes,
+                TotalDurationSec = duration,
+                AvgSpeedBytesPerSec = avgSpeed
+            };
+
+            TransferComplete?.Invoke(summary);
+            return summary;
+        }
+        catch (OperationCanceledException)
         {
-            TotalFiles = files.Count,
-            TotalSizeBytes = totalSizeBytes,
-            TotalDurationSec = duration,
-            AvgSpeedBytesPerSec = avgSpeed
-        };
-
-        TransferComplete?.Invoke(summary);
-        return summary;
+            TransferCancelled?.Invoke("Transfer cancelled by user.");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            TransferFailed?.Invoke(ex.Message);
+            throw;
+        }
+        finally
+        {
+            _currentTargetIp = null;
+            _currentTargetPort = 0;
+        }
     }
 
     public void Dispose()

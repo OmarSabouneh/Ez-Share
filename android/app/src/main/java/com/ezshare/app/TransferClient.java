@@ -24,6 +24,7 @@ public class TransferClient {
     public interface ClientCallback {
         void onTransferProgress(String json);
         void onTransferComplete(String json);
+        void onTransferCancelled(String reason);
         void onError(String message);
     }
 
@@ -37,6 +38,8 @@ public class TransferClient {
     private final ClientCallback callback;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile boolean isCancelled = false;
+    private String currentTargetIp;
+    private int currentTargetPort;
 
     public TransferClient(Context context, ClientCallback callback) {
         this.context = context;
@@ -45,9 +48,20 @@ public class TransferClient {
 
     public void cancel() {
         this.isCancelled = true;
+        if (currentTargetIp != null && currentTargetPort > 0) {
+            final String ip = currentTargetIp;
+            final int p = currentTargetPort;
+            new Thread(() -> {
+                try {
+                    postJson("http://" + ip + ":" + p + "/api/transfer/cancel", "{\"cancelled\":true}");
+                } catch (Exception ignored) {}
+            }).start();
+        }
     }
 
-    public void sendFiles(String targetIp, int targetPort, List<Uri> uris, String senderName) {
+    public void sendFiles(String targetIp, int targetPort, List<Uri> uris, String senderName, String pairCode) {
+        this.currentTargetIp = targetIp;
+        this.currentTargetPort = targetPort;
         isCancelled = false;
         new Thread(() -> {
             try {
@@ -75,6 +89,7 @@ public class TransferClient {
                     fileArray.put(fObj);
                 }
                 handshake.put("files", fileArray);
+                handshake.put("pairCode", pairCode != null ? pairCode : "");
 
                 postJson("http://" + targetIp + ":" + targetPort + "/api/transfer/handshake", handshake.toString());
 
@@ -168,7 +183,14 @@ public class TransferClient {
                 mainHandler.post(() -> callback.onTransferComplete(sumStr));
 
             } catch (Exception ex) {
-                mainHandler.post(() -> callback.onError(ex.getMessage()));
+                if (isCancelled || (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("cancel"))) {
+                    mainHandler.post(() -> callback.onTransferCancelled("Transfer cancelled by user."));
+                } else {
+                    mainHandler.post(() -> callback.onError(ex.getMessage()));
+                }
+            } finally {
+                currentTargetIp = null;
+                currentTargetPort = 0;
             }
         }).start();
     }
@@ -208,6 +230,9 @@ public class TransferClient {
         }
 
         int code = conn.getResponseCode();
+        if (code == 403) {
+            throw new Exception("Invalid 4-digit pairing code. Please verify the code shown on the receiving device.");
+        }
         if (code < 200 || code >= 300) {
             throw new Exception("HTTP request failed with status: " + code);
         }
