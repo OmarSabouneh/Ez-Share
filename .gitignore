@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build and Release artifacts
+bin/
+obj/
+dist/
+build/
+release/
+*.exe
+*.zip
+
+# System & OS
+Thumbs.db
+.DS_Store
+*.log

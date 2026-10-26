@@ -1,0 +1,24 @@
+{
+  "name": "ezshare",
+  "version": "1.0.0",
+  "description": "High-speed peer-to-peer LAN file transfer app between Windows and Mobile devices",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-packager . EzShare --platform=win32 --arch=x64 --out=../EzShare-Releases --overwrite --prune=true"
+  },
+  "keywords": [
+    "file-transfer",
+    "lan",
+    "p2p",
+    "windows",
+    "android",
+    "local-network"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^40.8.0",
+    "electron-packager": "^17.1.2"
+  }
+}

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EzShare - LAN File Transfer</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Bar -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
+            <path d="m16 16-4-4-4 4"></path>
+            <path d="M12 12v9"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">EzShare</span>
+          <span class="brand-subtitle">Local LAN Peer Transfer</span>
+        </div>
+      </div>
+
+      <div class="network-badge" id="networkBadge">
+        <span class="pulse-dot"></span>
+        <span id="networkIpText">Detecting LAN...</span>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="content-viewport">
+
+      <!-- VIEW 1: HOME (Choice to Send or Receive) -->
+      <section id="viewHome" class="view active">
+        <div class="hero-section">
+          <h1 class="hero-title">Ultra-Fast Local File Sharing</h1>
+          <p class="hero-desc">Send and receive files between Windows and Mobile devices on your local Wi-Fi. Direct peer-to-peer streaming with zero cloud limits.</p>
+        </div>
+
+        <div class="mode-cards-grid">
+          <!-- Send Mode Card -->
+          <div class="mode-card send-card" id="btnChooseSend">
+            <div class="card-glow"></div>
+            <div class="card-icon send-icon">
+              <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </div>
+            <div class="card-content">
+              <h3>Send Files</h3>
+              <p>Pick one or multiple files, then discover active devices ready on your network.</p>
+            </div>
+            <div class="card-action">
+              <span class="action-btn">Choose Files &rarr;</span>
+            </div>
+          </div>
+
+          <!-- Receive Mode Card -->
+          <div class="mode-card receive-card" id="btnChooseReceive">
+            <div class="card-glow"></div>
+            <div class="card-icon receive-icon">
+              <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </div>
+            <div class="card-content">
+              <h3>Receive Files</h3>
+              <p>Select your destination save folder to become visible to senders on this network.</p>
+            </div>
+            <div class="card-action">
+              <span class="action-btn">Pick Folder & Receive &rarr;</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: SENDER STAGING (Selected Files List) -->
+      <section id="viewSenderFiles" class="view">
+        <div class="view-header">
+          <button class="nav-back-btn" id="btnBackFromStaging">&larr; Back</button>
+          <div class="header-titles">
+            <h2>Staged Files</h2>
+            <span class="file-summary-badge" id="stagingSummaryBadge">0 files (0 MB)</span>
+          </div>
+          <button class="secondary-btn" id="btnAddMoreFiles">+ Add More</button>
+        </div>
+
+        <div class="files-list-container" id="stagingFilesList">
+          <!-- Dynamically populated file rows -->
+        </div>
+
+        <div class="view-footer">
+          <button class="primary-btn pulse-glow" id="btnProceedToDiscovery">
+            Find Devices on Network &rarr;
+          </button>
+        </div>
+      </section>
+
+      <!-- VIEW 3: SENDER DISCOVERY (Radar & Available Devices) -->
+      <section id="viewSenderDiscovery" class="view">
+        <div class="view-header">
+          <button class="nav-back-btn" id="btnBackFromDiscovery">&larr; Files</button>
+          <div class="header-titles">
+            <h2>Available Devices</h2>
+            <p class="subtitle">Looking for devices in "Receive" mode on your network</p>
+          </div>
+          <div class="radar-status-badge">
+            <span class="radar-spinner"></span>
+            <span>Scanning LAN...</span>
+          </div>
+        </div>
+
+        <!-- Radar Animation Banner -->
+        <div class="radar-scanner-box">
+          <div class="radar-circle circle-1"></div>
+          <div class="radar-circle circle-2"></div>
+          <div class="radar-circle circle-3"></div>
+          <div class="radar-sweep"></div>
+          <div class="radar-center-dot"></div>
+        </div>
+
+        <div class="devices-grid" id="discoveredDevicesGrid">
+          <!-- Empty State -->
+          <div class="empty-devices" id="emptyDevicesNotice">
+            <div class="empty-icon">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 6v6l4 2"></path>
+              </svg>
+            </div>
+            <h4>Waiting for Receiver...</h4>
+            <p>Ensure the other device (Windows or Mobile) has selected <strong>Receive</strong> and picked a destination folder.</p>
+          </div>
+          <!-- Device cards dynamically inserted here -->
+        </div>
+      </section>
+
+      <!-- VIEW 4: RECEIVER READY (Visible & Waiting) -->
+      <section id="viewReceiverReady" class="view">
+        <div class="view-header">
+          <button class="nav-back-btn" id="btnStopReceiver">&larr; Stop & Exit</button>
+          <div class="header-titles">
+            <h2>Ready to Receive</h2>
+            <p class="subtitle">Your device is now visible to senders on this network</p>
+          </div>
+        </div>
+
+        <div class="receiver-beacon-card">
+          <div class="beacon-visual">
+            <div class="beacon-ring ring-1"></div>
+            <div class="beacon-ring ring-2"></div>
+            <div class="beacon-core">
+              <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="#10B981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <polyline points="9 12 11 14 15 10"></polyline>
+              </svg>
+            </div>
+          </div>
+
+          <div class="beacon-status-text">
+            <h3 id="receiverDeviceNameText">This Device</h3>
+            <span class="badge-online">Active Beacon &bull; Visible</span>
+          </div>
+
+          <div class="receiver-path-box">
+            <div class="path-info">
+              <span class="path-label">Destination Folder:</span>
+              <span class="path-value" id="receiverSavePathText">C:\Users\...</span>
+            </div>
+            <button class="small-btn" id="btnChangeReceiverPath">Change Folder</button>
+          </div>
+
+          <p class="beacon-help">Senders on the same Wi-Fi can now select this device to send files directly.</p>
+        </div>
+      </section>
+
+      <!-- VIEW 5: ACTIVE TRANSFER (Live Speedometer & Progress) -->
+      <section id="viewTransferActive" class="view">
+        <div class="view-header">
+          <div class="header-titles">
+            <h2 id="transferTitle">Transferring Files...</h2>
+            <p class="subtitle" id="transferTargetSub">Streaming peer-to-peer</p>
+          </div>
+        </div>
+
+        <div class="transfer-dashboard">
+          <!-- Speedometer & Progress Circle / Gauge -->
+          <div class="metrics-row">
+            <div class="metric-card speed-metric">
+              <span class="metric-label">Transfer Speed</span>
+              <span class="metric-val" id="metricSpeed">0.0 MB/s</span>
+            </div>
+            <div class="metric-card eta-metric">
+              <span class="metric-label">Estimated Time</span>
+              <span class="metric-val" id="metricEta">Calculating...</span>
+            </div>
+            <div class="metric-card files-metric">
+              <span class="metric-label">Progress</span>
+              <span class="metric-val" id="metricFilesProgress">0 / 0 Files</span>
+            </div>
+          </div>
+
+          <!-- Big Progress Bar -->
+          <div class="progress-container">
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+            </div>
+            <div class="progress-labels">
+              <span id="progressBytesText">0 MB / 0 MB</span>
+              <span id="progressPercentText" class="percent-highlight">0%</span>
+            </div>
+          </div>
+
+          <div class="current-file-badge">
+            <span class="spinner-small"></span>
+            <span id="currentFileNameText">Initializing transfer session...</span>
+          </div>
+
+          <div class="transfer-actions">
+            <button class="danger-btn" id="btnCancelTransfer">Cancel Transfer</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 6: TRANSFER COMPLETE -->
+      <section id="viewTransferComplete" class="view">
+        <div class="success-card">
+          <div class="success-icon-wrap">
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#10B981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+          </div>
+
+          <h2>Transfer Complete!</h2>
+          <p class="success-subtitle" id="completeSubtitle">All files were transferred successfully.</p>
+
+          <div class="summary-stats-box" id="completeStatsBox">
+            <!-- Dynamically populated metrics -->
+          </div>
+
+          <div class="complete-actions">
+            <button class="secondary-btn" id="btnOpenSaveDirectory">Open Destination Folder</button>
+            <button class="primary-btn" id="btnReturnHome">Return to Home</button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
